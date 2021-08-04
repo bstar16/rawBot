@@ -48,6 +48,7 @@ public class ScanBot extends Bot {
   private Vec3d player;
 
   // Bot isn't in queue server anymore
+  private boolean queue_passed;
   private long server_join;
 
   // Last reported scan advancement
@@ -97,6 +98,13 @@ public class ScanBot extends Bot {
         }
         break;
       case 53:
+        {
+          if(! this.queue_passed) {
+            this.dateAndPrint("Queue passed. Starting the scan..");
+            if(this.mode == Mode.AREA) this.printRemainingTime();
+            this.queue_passed = true;
+            this.server_join = System.currentTimeMillis();
+          }
         }
         break;
       case 11:
@@ -129,6 +137,14 @@ public class ScanBot extends Bot {
           }
         }
         break;
+    }
+  }
+
+  protected void onDeath() {
+    if(this.queue_passed) { // avoid queue
+      this.dateAndPrint("Bot was killed, respawning..");
+      this.sendPacket(new ClientStatusPacket(ClientStatusPacket.State.PERFORM_RESPAWN));
+    }
   }
 
   protected void onDisconnected(IOException exception) {
@@ -144,7 +160,26 @@ public class ScanBot extends Bot {
     this.queue_passed = false;
 
     this.last_run = 0;
- }
+  }
+
+  protected void onTick() {
+    if(! this.queue_passed) return;
+
+    // Manage timeouts
+    long time = System.currentTimeMillis();
+
+    // Don't send right after joining + DEFINED scan redo delay
+    if((time - this.server_join <= 1000) || (time - this.last_run <= 120000)) return;
+
+    Iterator iterator = this.window.iterator();
+    while(iterator.hasNext()) {
+      RequestsWave current = (RequestsWave) iterator.next();
+      if(time - current.getTime() >= ScanBot.TIMEOUT) {
+        this.retry.add(current);
+        iterator.remove();
+        this.dateAndPrint(String.format("Requests Wave[%d] timed out", current.getACK()), System.err);
+      } else break;
+    }
 
     // Send requests
     if(this.window.size() < this.window_size) {
